@@ -42,10 +42,12 @@ func create_auth_list(uFile, pFile string) []string {
 
 func main() {
 
-	domain_path := "https://example.com"
+	//domain_path := "https://example.com"
 
-	userFile := os.Args[1]
-	passFile := os.Args[2]
+	domain_path := os.Args[1]
+
+	userFile := os.Args[2]
+	passFile := os.Args[3]
 
 	var auth_list = create_auth_list(userFile, passFile)
 
@@ -94,5 +96,5 @@ func main() {
 }
 
 //
-// RUN WITH -> go run PATH-TO-SCRIPT USERNAME-LIST-PATH PASSWORD-LIST-PATH
+// RUN WITH -> go run PATH-TO-SCRIPT URL USERNAME-LIST-PATH PASSWORD-LIST-PATH
 //
